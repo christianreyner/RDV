@@ -1,11 +1,19 @@
 # target_tracker.py
 
 from dataclasses import dataclass
+import math
 
 import numpy as np
 
 from camera import R_CAM_BODY
 from math_utils import euler_to_rotation_body_to_ned
+
+
+@dataclass
+class TargetState:
+    north_m: float
+    east_m: float
+    down_m: float
 
 
 @dataclass
@@ -19,24 +27,51 @@ class TargetProjection:
     range_m: float
 
 
-class TargetTracker:
+class MovingTarget:
     def __init__(
         self,
-        camera,
-        target_north_m,
-        target_east_m,
-        target_alt_above_home_m,
+        initial_north_m,
+        initial_east_m,
+        alt_above_home_m,
+        speed_mps,
+        heading_deg,
     ):
-        self.camera = camera
+        self.initial_north_m = initial_north_m
+        self.initial_east_m = initial_east_m
+        self.down_m = -alt_above_home_m
 
-        self.target_ned = np.array([
-            target_north_m,
-            target_east_m,
-            -target_alt_above_home_m,
-        ])
+        self.speed_mps = speed_mps
+        self.heading_rad = math.radians(heading_deg)
+
+    def get_state(self, elapsed_s):
+        north_m = (
+            self.initial_north_m
+            + self.speed_mps * math.cos(self.heading_rad) * elapsed_s
+        )
+
+        east_m = (
+            self.initial_east_m
+            + self.speed_mps * math.sin(self.heading_rad) * elapsed_s
+        )
+
+        return TargetState(
+            north_m=north_m,
+            east_m=east_m,
+            down_m=self.down_m,
+        )
+
+
+class TargetTracker:
+    def __init__(self, camera, moving_target):
+        self.camera = camera
+        self.moving_target = moving_target
+
+    def get_target_state(self, elapsed_s):
+        return self.moving_target.get_state(elapsed_s)
 
     def project_from_state(
         self,
+        target_state,
         north_m,
         east_m,
         down_m,
@@ -50,7 +85,13 @@ class TargetTracker:
             down_m,
         ])
 
-        rel_ned = self.target_ned - vehicle_ned
+        target_ned = np.array([
+            target_state.north_m,
+            target_state.east_m,
+            target_state.down_m,
+        ])
+
+        rel_ned = target_ned - vehicle_ned
         range_m = np.linalg.norm(rel_ned)
 
         if range_m < 1e-6:
