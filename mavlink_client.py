@@ -8,7 +8,7 @@ from math_utils import quat_from_euler
 
 
 class ArduPilotClient:
-    def __init__(self, connection_string, baud=None):
+    def __init__(self, connection_string, baud=None, heartbeat_timeout=10.0):
         # Start monotonic timer for MAVLink timestamps
         self.start_time = time.monotonic()
         if baud is None:
@@ -20,7 +20,9 @@ class ArduPilotClient:
             )
 
         print("Waiting for heartbeat...")
-        self.master.wait_heartbeat()
+        if self.master.wait_heartbeat(timeout=heartbeat_timeout) is None:
+            self.master.close()
+            raise TimeoutError("No autopilot heartbeat")
         print(
             f"Heartbeat from system={self.master.target_system}, "
             f"component={self.master.target_component}"
@@ -28,6 +30,10 @@ class ArduPilotClient:
 
         self.last_local_position = None
         self.last_attitude = None
+        self.last_position_time = 0.0
+        self.last_attitude_time = 0.0
+        self.last_heartbeat_time = time.monotonic()
+        self.parameters = {}
 
     def request_data_streams(self, rate_hz=50):
         self.master.mav.request_data_stream_send(
@@ -74,13 +80,27 @@ class ArduPilotClient:
             if msg is None:
                 break
 
+            if (msg.get_srcSystem() != self.master.target_system or
+                    msg.get_srcComponent() != self.master.target_component):
+                continue
+
             mtype = msg.get_type()
 
             if mtype == "LOCAL_POSITION_NED":
                 self.last_local_position = msg
+                self.last_position_time = time.monotonic()
 
             elif mtype == "ATTITUDE":
                 self.last_attitude = msg
+                self.last_attitude_time = time.monotonic()
+
+            elif mtype == "HEARTBEAT":
+                self.last_heartbeat_time = time.monotonic()
+            elif mtype == "PARAM_VALUE":
+                name = msg.param_id
+                if isinstance(name, bytes):
+                    name = name.decode("ascii")
+                self.parameters[name.rstrip("\x00")] = msg.param_value
 
     def wait_for_initial_state(self):
         print("Waiting for LOCAL_POSITION_NED and ATTITUDE...")

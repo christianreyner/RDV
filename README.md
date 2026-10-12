@@ -32,3 +32,60 @@ python3 Tools/autotest/sim_vehicle.py -v ArduCopter  --out=udp:127.0.0.1:14550 -
 
 2. Run the program  
 python3 main.py
+
+## Live OV9281 camera
+
+The live camera path is implemented in `live_camera.py` and `live_app.py`.
+`main.py` selects it with `USE_REAL_CAMERA = True`. The synthetic target and
+world-coordinate parameters are unused in this mode. Existing simulated code
+remains available with `USE_REAL_CAMERA = False`.
+
+Install NumPy, pymavlink, and an OpenCV **contrib build with GUI support** on the
+Raspberry Pi. A headless OpenCV build cannot show the selection window. The
+`rpicam-vid` command must be installed and the camera usable from your desktop
+session. Run `python3 main.py`.
+
+1. Leave `DRY_RUN = True` initially: this opens the camera without connecting to
+   MAVLink or sending commands. Click the target; a 40x40 full-resolution box
+   appears. Observe it follow the intended target, rather than the background.
+2. Wait for ten consecutive accepted tracker updates (`LOCK READY`). Enter
+   confirms the selected target. Dry run prints confirmation and keeps previewing.
+   R clears selection; click again to change targets. Q/Esc/window close cancels.
+3. Before flight, verify the lens FOV in `config.py` and camera mounting. The
+   existing controller expects an **upward-looking camera**, image-right toward
+   aircraft-right and image-down toward aircraft-forward. Rotation and axis signs
+   are configurable; validate the resulting roll/pitch direction with props
+   removed. A forward/downward camera needs a different controller mapping.
+4. Set `DRY_RUN = False`, restart, click and verify the target, then press Enter.
+   **Enter authorizes automatic Guided mode, arming, level climb, and tracking.**
+   No MAVLink connection or flight command is made before this confirmation.
+   The app checks fresh telemetry, a disarmed start, `GUID_OPTIONS` bit 8, and
+   confirms Guided mode and arming from heartbeats. Parameters are never changed.
+5. After confirmation, clicking cannot select a different target. Q/Esc/Ctrl+C,
+   R, tracker failure/rejected jump, camera failure, or stale telemetry stops
+   tracking. If the most recently received mode is still Guided, one current-
+   position hold is requested; the program then exits. Switching out of Guided
+   stops attitude commands and preserves the pilot's selected mode.
+
+Camera/tracker target rate is 20 FPS; measured FPS depends on hardware and box
+size. Preview defaults to 640x360 at 10 FPS. Change `PREVIEW_DIVISOR` to 4 for
+320x180; selection size stays 40x40 camera pixels. `PREVIEW_FPS` sets rendering
+cadence, capped by processing throughput. Compact stats report processed-frame
+FPS, mean conversion/tracker/preview time, estimated computational headroom, and
+skipped capture frames. Headroom excludes camera waits and is not a guaranteed
+maximum camera rate. The newest complete frame is used; queues do not accumulate.
+
+Pixel errors are `(u-cx)/fx` and `(v-cy)/fy`; the controller uses elapsed frame
+time and suppresses the initial derivative spike. Live CSV logs use
+`LIVE_CSV_LOG_PATH` with observed pixels, normalized errors, commands, and EKF
+altitude. No target world position or range is inferred from a single camera.
+
+This remains the original thrust-based launch controller: it does not hold
+altitude during tracking. `GUID_OPTIONS` bit 8 selects direct thrust; without it
+ArduPilot interprets 0.5 as zero climb rate, so the existing thrust values are
+incompatible. Source: https://ardupilot.org/dev/docs/copter-commands-in-guided-mode.html
+Tune thrust/gains for the aircraft and validate in SITL and a props-off direction
+check before airborne use. A CSRT success flag plus jump/area checks is not proof
+of target identity; slow drift onto background can pass these checks. The hold
+message is a request, not an acknowledged flight-mode change; it requires a
+working position estimate and link. Existing autopilot failsafes still apply.
