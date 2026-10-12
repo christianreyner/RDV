@@ -23,10 +23,10 @@ ENABLE_VISUALIZATION = False
 VISUALIZATION_EVERY_N_FRAMES = 10
 
 # ============================================================
-# Target
+# Target (WORLD CONVENTION)
 # ============================================================
 
-TARGET_INITIAL_NORTH_M = -10.0
+TARGET_INITIAL_NORTH_M = -15.0
 TARGET_INITIAL_EAST_M = 0.0
 TARGET_ALT_ABOVE_HOME_M = 20.0
 
