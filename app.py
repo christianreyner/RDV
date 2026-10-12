@@ -89,24 +89,28 @@ class VisualLaunchTrackerApp:
         self.ap.set_mode_guided()
         self.ap.wait_for_initial_state()
 
-        self._prearm_attitude_hold()
-
-        self.ap.arm()
-
-        self._initial_level_climb()
+        # Capture once: hold this heading throughout the run.
+        self.yaw_reference = self.ap.last_attitude.yaw
 
         try:
+            self._prearm_attitude_hold()
+            self.ap.arm()
+            self._initial_level_climb()
             self._tracking_loop()
 
         except KeyboardInterrupt:
-            self._send_stop_command()
+            # Only request airborne position hold if already armed.
+            if self.ap.master.motors_armed():
+                self._send_stop_command()
+            else:
+                print("\nStopped before arming.")
 
         finally:
             self.csv_logger.close()
-            
+
             if self.visualizer is not None:
                 self.visualizer.close()
-                
+
             print(f"CSV log saved to: {cfg.CSV_LOG_PATH}")
 
     def _prearm_attitude_hold(self):
@@ -117,13 +121,10 @@ class VisualLaunchTrackerApp:
         while time.time() - t0 < cfg.PREARM_ATTITUDE_SECONDS:
             self.ap.update_messages()
 
-            att = self.ap.last_attitude
-            yaw_hold = att.yaw if att is not None else 0.0
-
             self.ap.send_attitude_target(
                 roll=0.0,
                 pitch=0.0,
-                yaw=yaw_hold,
+                yaw=self.yaw_reference,
                 thrust=0.0,
             )
 
@@ -137,13 +138,10 @@ class VisualLaunchTrackerApp:
         while time.time() - t0 < cfg.INITIAL_LEVEL_SECONDS_AFTER_ARM:
             self.ap.update_messages()
 
-            att = self.ap.last_attitude
-            yaw_hold = att.yaw if att is not None else 0.0
-
             self.ap.send_attitude_target(
                 roll=0.0,
                 pitch=0.0,
-                yaw=yaw_hold,
+                yaw=self.yaw_reference,
                 thrust=cfg.NOMINAL_CLIMB_THRUST,
             )
 
@@ -207,7 +205,7 @@ class VisualLaunchTrackerApp:
                 self.ap.send_attitude_target(
                     roll=command["roll"],
                     pitch=command["pitch"],
-                    yaw=att.yaw,
+                    yaw=self.yaw_reference,
                     thrust=command["thrust"],
                 )
 
@@ -240,22 +238,10 @@ class VisualLaunchTrackerApp:
                     )
 
     def _send_stop_command(self):
-        print()
-        print("Stopping. Sending low thrust level command...")
+        print("\nStopping tracking. Requesting position hold...")
 
-        for _ in range(30):
-            self.ap.update_messages()
+        self.ap.hold_current_position(
+            yaw=self.yaw_reference,
+        )
 
-            att = self.ap.last_attitude
-            yaw_hold = att.yaw if att is not None else 0.0
-
-            self.ap.send_attitude_target(
-                roll=0.0,
-                pitch=0.0,
-                yaw=yaw_hold,
-                thrust=0.21,
-            )
-
-            time.sleep(0.05)
-
-        print("Done.")
+        print("Position hold requested. Aircraft remains in GUIDED.")
