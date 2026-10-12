@@ -111,3 +111,26 @@ class ArduPilotClient:
             0.0,
             thrust,
         )
+
+    def hold_current_position(self, yaw):
+        time_boot_ms = (
+            int((time.monotonic() - self.start_time) * 1000)
+            & 0xFFFFFFFF
+        )
+
+        # Use position + yaw.
+        # Ignore velocity, acceleration, and yaw rate.
+        type_mask = 0b100111111000  # 2552
+
+        self.master.mav.set_position_target_local_ned_send(
+            time_boot_ms,
+            self.master.target_system,
+            self.master.target_component,
+            mavutil.mavlink.MAV_FRAME_LOCAL_OFFSET_NED,
+            type_mask,
+            0.0, 0.0, 0.0,  # Hold current position and altitude
+            0.0, 0.0, 0.0,  # Velocity: ignored
+            0.0, 0.0, 0.0,  # Acceleration: ignored
+            yaw,            # Fixed heading, radians
+            0.0,            # Yaw rate: ignored
+        )
