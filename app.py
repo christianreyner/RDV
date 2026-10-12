@@ -70,7 +70,8 @@ class VisualLaunchTrackerApp:
         if cfg.ENABLE_VISUALIZATION:
             self.visualizer = LiveVisualizer(camera=self.camera)
             
-        self.ap = ArduPilotClient(cfg.SITL_CONNECTION)
+        # self.ap = ArduPilotClient(cfg.SITL_CONNECTION)
+        self.ap = ArduPilotClient(cfg.MAVLINK_CONNECTION, baud=cfg.MAVLINK_BAUD)
 
     def run(self):
         target_state_0 = self.tracker.get_target_state(elapsed_s=0.0)
@@ -252,7 +253,7 @@ class VisualLaunchTrackerApp:
                 roll=0.0,
                 pitch=0.0,
                 yaw=yaw_hold,
-                thrust=0.35,
+                thrust=0.21,
             )
 
             time.sleep(0.05)
