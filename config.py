@@ -4,7 +4,9 @@
 # Connection
 # ============================================================
 
-SITL_CONNECTION = "udp:127.0.0.1:14551"
+# SITL_CONNECTION = "udp:127.0.0.1:14551"
+MAVLINK_CONNECTION = "/dev/serial0"
+MAVLINK_BAUD = 115200
 
 TRACKING_FPS = 30.0
 DT = 1.0 / TRACKING_FPS
@@ -24,13 +26,13 @@ VISUALIZATION_EVERY_N_FRAMES = 10
 # Target
 # ============================================================
 
-TARGET_INITIAL_NORTH_M = 50.0
-TARGET_INITIAL_EAST_M = 50.0
-TARGET_ALT_ABOVE_HOME_M = 100.0
+TARGET_INITIAL_NORTH_M = -10.0
+TARGET_INITIAL_EAST_M = 0.0
+TARGET_ALT_ABOVE_HOME_M = 20.0
 
 # Heading convention:
 # 0 deg = North, 90 deg = East, 180 deg = South, 270 deg = West
-TARGET_SPEED_MPS = 10.0
+TARGET_SPEED_MPS = 0.0
 TARGET_HEADING_DEG = 225
 
 
@@ -65,15 +67,15 @@ MAX_PITCH_RATE_DEG_S = 90.0
 # ============================================================
 
 # Positive climb thrust during ground launch.
-NOMINAL_CLIMB_THRUST = 0.45
+NOMINAL_CLIMB_THRUST = 0.25
 
 # Lower thrust after initial climb.
 # This is not true altitude hold; it is only a crude thrust phase change.
-POST_TAKEOFF_THRUST = 0.5
+POST_TAKEOFF_THRUST = 0.3
 
 POST_TAKEOFF_ALT_M = 5.0
 
-MIN_THRUST = 0.35
+MIN_THRUST = 0.18
 MAX_THRUST = 0.98
 
 COMPENSATE_TILT_THRUST = True
