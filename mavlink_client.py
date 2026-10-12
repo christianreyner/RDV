@@ -19,17 +19,27 @@ class ArduPilotClient:
                 baud=baud,
             )
 
-        print("Waiting for heartbeat...")
-        if self.master.wait_heartbeat(timeout=heartbeat_timeout) is None:
+        print("Waiting for ArduPilot heartbeat...")
+        deadline = time.monotonic() + heartbeat_timeout
+        hb = None
+        while time.monotonic() < deadline:
+            msg = self.master.recv_match(type="HEARTBEAT", blocking=True, timeout=0.5)
+            if (msg is not None and
+                    msg.autopilot == mavutil.mavlink.MAV_AUTOPILOT_ARDUPILOTMEGA and
+                    msg.type != mavutil.mavlink.MAV_TYPE_GCS):
+                hb = msg
+                break
+        if hb is None:
             self.master.close()
-            raise TimeoutError("No autopilot heartbeat")
-        print(
-            f"Heartbeat from system={self.master.target_system}, "
-            f"component={self.master.target_component}"
-        )
+            raise TimeoutError("No ArduPilot heartbeat")
+        self.master.target_system = hb.get_srcSystem()
+        self.master.target_component = hb.get_srcComponent()
+        print(f"Selected autopilot: {self.master.target_system}/{self.master.target_component}")
 
         self.last_local_position = None
         self.last_attitude = None
+        self.last_altitude = None
+        self.last_altitude_time = 0.0
         self.last_position_time = 0.0
         self.last_attitude_time = 0.0
         self.last_heartbeat_time = time.monotonic()
@@ -52,8 +62,19 @@ class ArduPilotClient:
             1,
         )
 
+    def request_camera_streams(self, rate_hz=20):
+        # Attitude and estimator/barometer altitude; no GPS or local-position request.
+        for message_id in (mavutil.mavlink.MAVLINK_MSG_ID_ATTITUDE,
+                           mavutil.mavlink.MAVLINK_MSG_ID_VFR_HUD):
+            self.master.mav.command_long_send(
+                self.master.target_system, self.master.target_component,
+                mavutil.mavlink.MAV_CMD_SET_MESSAGE_INTERVAL, 0,
+                message_id, int(1_000_000 / rate_hz), 0, 0, 0, 0, 0)
+
     def set_mode_guided(self):
-        mode = "GUIDED"
+        self.set_mode("GUIDED")
+
+    def set_mode(self, mode):
 
         if mode not in self.master.mode_mapping():
             raise RuntimeError(f"{mode} mode not available")
@@ -66,7 +87,7 @@ class ArduPilotClient:
             mode_id,
         )
 
-        print("Requested GUIDED mode")
+        print(f"Requested {mode} mode")
 
     def arm(self):
         print("Arming...")
@@ -89,6 +110,12 @@ class ArduPilotClient:
             if mtype == "LOCAL_POSITION_NED":
                 self.last_local_position = msg
                 self.last_position_time = time.monotonic()
+
+            elif mtype == "VFR_HUD":
+                import math
+                if math.isfinite(msg.alt):
+                    self.last_altitude = msg.alt
+                    self.last_altitude_time = time.monotonic()
 
             elif mtype == "ATTITUDE":
                 self.last_attitude = msg

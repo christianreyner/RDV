@@ -118,6 +118,7 @@ class LiveCameraTracker:
         self.next_preview = 0.0
         self.last_frame_time = time.monotonic()
         self.flying = False
+        self.airborne = False
         self.work = self.count = self.skipped = 0
         self.report_time = time.monotonic()
         self.state = "Click target | Enter: confirm & launch | R: reset | Q: quit"
@@ -192,7 +193,7 @@ class LiveCameraTracker:
                     self.observation = Observation(u, v, ex*cfg.CAMERA_X_SIGN,
                                                    ey*cfg.CAMERA_Y_SIGN, self.last_frame_time)
                     self.lock_count += 1
-                    self.state = "FLYING" if self.flying else (
+                    self.state = ("FLYING" if self.airborne else "STARTUP") if self.flying else (
                         "LOCK READY | Enter: confirm & launch" if self.ready() else "LOCKING - observe target")
                 else:
                     self.reset()

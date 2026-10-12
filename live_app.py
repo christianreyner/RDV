@@ -21,13 +21,14 @@ class LiveCameraApp:
         self.logfile = None
         self.launch_requested = False
         self.yaw_reference = None
+        self.launch_altitude = None
         self.previous_observation_time = None
 
     def _fresh_state(self):
         now = time.monotonic()
-        return (self.ap.last_attitude is not None and self.ap.last_local_position is not None and
+        return (self.ap.last_attitude is not None and self.ap.last_altitude is not None and
                 now-self.ap.last_attitude_time < cfg.TELEMETRY_STALE_SECONDS and
-                now-self.ap.last_position_time < cfg.TELEMETRY_STALE_SECONDS and
+                now-self.ap.last_altitude_time < cfg.TELEMETRY_STALE_SECONDS and
                 now-self.ap.last_heartbeat_time < 3.0)
 
     def _pump(self, require_lock=False):
@@ -70,8 +71,8 @@ class LiveCameraApp:
             self.vision.flying = True
             self.ap = ArduPilotClient(cfg.MAVLINK_CONNECTION, baud=cfg.MAVLINK_BAUD,
                                       heartbeat_timeout=cfg.STARTUP_TIMEOUT_SECONDS)
-            self.ap.request_data_streams(rate_hz=50)
-            self._wait(self._fresh_state, "fresh position and attitude")
+            self.ap.request_camera_streams(rate_hz=cfg.TRACKING_FPS)
+            self._wait(self._fresh_state, "fresh attitude and altitude (VFR_HUD)")
             if self.ap.master.motors_armed():
                 raise RuntimeError("Launch sequence requires a disarmed aircraft")
             self.ap.master.mav.param_request_read_send(
@@ -80,18 +81,20 @@ class LiveCameraApp:
             self._wait(lambda: "GUID_OPTIONS" in self.ap.parameters, "GUID_OPTIONS")
             if not int(self.ap.parameters["GUID_OPTIONS"]) & 8:
                 raise RuntimeError("Controller requires GUID_OPTIONS bit 8 (direct thrust); parameter was not changed")
-            self.ap.set_mode_guided()
-            self._wait(lambda: self.ap.master.flightmode == "GUIDED", "GUIDED heartbeat")
+            self.ap.set_mode("GUIDED_NOGPS")
+            self._wait(lambda: self.ap.master.flightmode == "GUIDED_NOGPS", "GUIDED_NOGPS heartbeat")
             self.yaw_reference = self.ap.last_attitude.yaw
+            self.launch_altitude = self.ap.last_altitude
             self._level_phase(cfg.PREARM_ATTITUDE_SECONDS, thrust=0.0, armed=False)
             self.launch_requested = True
             self.ap.master.arducopter_arm()
             self._wait(self.ap.master.motors_armed, "arming heartbeat")
+            self.vision.airborne = True
             self._level_phase(cfg.INITIAL_LEVEL_SECONDS_AFTER_ARM,
                               thrust=cfg.NOMINAL_CLIMB_THRUST, armed=True)
             self.logfile = open(cfg.LIVE_CSV_LOG_PATH, "w", newline="")
             writer = csv.writer(self.logfile)
-            writer.writerow(["time_s", "u_px", "v_px", "ex", "ey", "roll_rad", "pitch_rad", "thrust", "alt_ekf_m"])
+            writer.writerow(["time_s", "u_px", "v_px", "ex", "ey", "roll_rad", "pitch_rad", "thrust", "alt_above_launch_m"])
             start = time.monotonic()
             while True:
                 _, new_frame = self._pump(require_lock=True)
@@ -105,7 +108,7 @@ class LiveCameraApp:
                 else:
                     self.controller.dt = max(0.001, obs.timestamp-self.previous_observation_time)
                 self.previous_observation_time = obs.timestamp
-                altitude = -self.ap.last_local_position.z
+                altitude = self.ap.last_altitude - self.launch_altitude
                 cmd = self.controller.compute_visible_target_command(obs.ex, obs.ey, altitude)
                 self.ap.send_attitude_target(cmd["roll"], cmd["pitch"], self.yaw_reference, cmd["thrust"])
                 writer.writerow([time.monotonic()-start, obs.u, obs.v, obs.ex, obs.ey,
@@ -121,11 +124,10 @@ class LiveCameraApp:
                 if self.ap is not None and self.launch_requested:
                     # A pending arm request may have succeeded even if its heartbeat was missed.
                     self.ap.update_messages()
-                    if self.ap.master.flightmode == "GUIDED" and self.yaw_reference is not None:
-                        self.ap.hold_current_position(self.yaw_reference)
-                        print("Position hold requested once; reception/acceptance is not verified.")
+                    if self.ap.master.flightmode == "GUIDED_NOGPS" and self.yaw_reference is not None:
+                        self._request_land()
                     else:
-                        print("Flight mode changed; no Guided hold sent.")
+                        print("Flight mode changed; no automatic landing request sent.")
             finally:
                 if self.logfile is not None:
                     self.logfile.close()
@@ -137,8 +139,8 @@ class LiveCameraApp:
     def _check_flight(self):
         if not self._fresh_state():
             raise RuntimeError("Telemetry stale")
-        if self.ap.master.flightmode != "GUIDED":
-            raise RuntimeError("Pilot/autopilot left GUIDED; attitude commands stopped")
+        if self.ap.master.flightmode != "GUIDED_NOGPS":
+            raise RuntimeError("Pilot/autopilot left GUIDED_NOGPS; attitude commands stopped")
         if not self.ap.master.motors_armed():
             raise RuntimeError("Aircraft disarmed; attitude commands stopped")
 
@@ -148,7 +150,24 @@ class LiveCameraApp:
             _, new_frame = self._pump(require_lock=True)
             if armed:
                 self._check_flight()
-            elif not self._fresh_state() or self.ap.master.flightmode != "GUIDED" or self.ap.master.motors_armed():
+            elif not self._fresh_state() or self.ap.master.flightmode != "GUIDED_NOGPS" or self.ap.master.motors_armed():
                 raise RuntimeError("Prearm state changed")
             if new_frame:
                 self.ap.send_attitude_target(0.0, 0.0, self.yaw_reference, thrust)
+
+    def _request_land(self):
+        # Stop sending attitude/thrust immediately. LAND needs no horizontal fix.
+        # Do not override a pilot mode change while checking the transition.
+        self.ap.set_mode("LAND")
+        deadline = time.monotonic() + 3.0
+        while time.monotonic() < deadline:
+            self.ap.update_messages()
+            mode = self.ap.master.flightmode
+            if mode == "LAND":
+                print("LAND confirmed. No horizontal position hold; pilot takeover remains available.")
+                return
+            if mode != "GUIDED_NOGPS":
+                print("Pilot/autopilot changed mode; landing verification stopped.")
+                return
+            time.sleep(0.02)
+        print("LAND not confirmed. Pilot must take over.")

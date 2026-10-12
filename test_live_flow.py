@@ -47,7 +47,9 @@ class FakeAP:
         self.holds = []
         self.parameters = {}
         self.last_attitude = SimpleNamespace(yaw=.6)
-        self.last_local_position = SimpleNamespace(z=-3)
+        self.last_local_position = None
+        self.last_altitude = 700.0
+        self.last_attitude_time = self.last_altitude_time = self.last_heartbeat_time = 0.0
         self.master = SimpleNamespace(target_system=1, target_component=1,
             flightmode='STABILIZE', motors_armed=lambda: self.armed,
             arducopter_arm=self.arm, close=lambda: None,
@@ -58,11 +60,13 @@ class FakeAP:
     def arm(self):
         self.armed = True
     def update_messages(self):
-        self.last_attitude_time = self.last_position_time = self.last_heartbeat_time = time.monotonic()
-    def request_data_streams(self, **kwargs):
+        self.last_attitude_time = self.last_altitude_time = self.last_heartbeat_time = time.monotonic()
+    def request_camera_streams(self, **kwargs):
         pass
-    def set_mode_guided(self):
-        self.master.flightmode = 'GUIDED'
+    def set_mode(self, mode):
+        self.master.flightmode = mode
+        if mode == 'LAND':
+            self.holds.append(mode)
     def send_attitude_target(self, *args):
         self.commands.append(args)
     def hold_current_position(self, yaw):
@@ -100,9 +104,22 @@ class FlowTests(unittest.TestCase):
         ap = app.ap
         self.assertTrue(ap.armed)
         self.assertGreater(len(ap.commands), 0)
-        self.assertEqual(ap.holds, [.6])
+        self.assertEqual(ap.holds, ['LAND'])
         self.assertTrue(all(cmd[2] == .6 for cmd in ap.commands))
         self.assertTrue(app.vision.closed)
+
+    def test_stale_altitude_blocks_arming(self):
+        with patch.object(FakeAP, 'update_messages', lambda ap: setattr(ap, 'last_attitude_time', time.monotonic())), \
+             patch.object(cfg, 'STARTUP_TIMEOUT_SECONDS', 0):
+            with self.assertRaisesRegex(RuntimeError, 'fresh attitude and altitude'):
+                self.run_app()
+        self.assertFalse(FakeAP.instances[0].armed)
+
+    def test_altitude_is_relative_to_launch_without_local_position(self):
+        app = self.run_app()
+        self.assertIsNone(app.ap.last_local_position)
+        self.assertEqual(app.launch_altitude, 700.0)
+        self.assertIsNotNone(app.previous_observation_time)
 
     def test_wrong_thrust_semantics_blocks_arming(self):
         with patch.object(FakeAP, 'options', 0):
@@ -119,7 +136,7 @@ class FlowTests(unittest.TestCase):
                 return super().step()
         with self.assertRaisesRegex(RuntimeError, 'camera failed'):
             self.run_app(vision=Broken)
-        self.assertEqual(FakeAP.instances[0].holds, [.6])
+        self.assertEqual(FakeAP.instances[0].holds, ['LAND'])
 
     def test_pilot_mode_change_preserved(self):
         class Pilot(FakeVision):
