@@ -8,8 +8,16 @@ from math_utils import quat_from_euler
 
 
 class ArduPilotClient:
-    def __init__(self, connection_string):
-        self.master = mavutil.mavlink_connection(connection_string)
+    def __init__(self, connection_string, baud=None):
+        # Start monotonic timer for MAVLink timestamps
+        self.start_time = time.monotonic()
+        if baud is None:
+            self.master = mavutil.mavlink_connection(connection_string)
+        else:
+            self.master = mavutil.mavlink_connection(
+                connection_string,
+                baud=baud,
+            )
 
         print("Waiting for heartbeat...")
         self.master.wait_heartbeat()
@@ -86,11 +94,14 @@ class ArduPilotClient:
     def send_attitude_target(self, roll, pitch, yaw, thrust):
         q = quat_from_euler(roll, pitch, yaw)
 
+        # Milliseconds elapsed since client initialization
+        time_boot_ms = int((time.monotonic() - self.start_time) * 1000) & 0xFFFFFFFF
+
         # Use attitude + thrust, ignore body rates.
         type_mask = 0b00000111
 
         self.master.mav.set_attitude_target_send(
-            int(time.time() * 1e6) & 0xFFFFFFFF,
+            time_boot_ms,
             self.master.target_system,
             self.master.target_component,
             type_mask,
